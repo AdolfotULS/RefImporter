@@ -1,19 +1,21 @@
 # RefImporter
 
-RefImporter is a Windows Forms application developed in C# (.NET Framework). Its main purpose appears to be providing a graphical user interface for importing references, though the exact feature set should be clarified by the project owner or further code analysis.
+RefImporter is a Windows Forms application developed in C# (.NET Framework). It provides a graphical user interface for importing DLL references into a C# project file (.csproj), streamlining the process for developers working with multiple dependencies.
 
 ## Features
 
 - Windows Forms-based GUI (`ImporterGUI`)
-- Main entry point launches the graphical interface
-- Assembly information and versioning included
+- Select a `.csproj` file and a folder containing `.dll` files
+- Automatically adds missing DLL references to the project file
+- Ensures only valid .NET assemblies are referenced
+- Displays messages for success, warnings, or errors
 
 ## Getting Started
 
 ### Prerequisites
 
-- .NET Framework (compatible with Windows Forms)
-- Visual Studio or compatible IDE
+- .NET Framework (suitable for Windows Forms applications)
+- Visual Studio or a compatible IDE
 
 ### Installation
 
@@ -27,17 +29,21 @@ RefImporter is a Windows Forms application developed in C# (.NET Framework). Its
 
 ### Usage
 
-When you run the program, it will open the main GUI window. From there, you can use the interface to import references (details of the functionality depend on further code or documentation).
+1. Launch the application; the main GUI window will appear.
+2. Click the button to select your `.csproj` file.
+3. Click the button to select the folder containing your `.dll` files.
+4. The application checks which DLLs are already referenced and adds missing ones as needed.
+5. Success and error messages inform you of the results.
 
 ## Project Structure
 
-- `Program.cs`: Main entry point, launches the GUI.
-- `View/ImporterGUI.cs`: The main form for the application.
-- `Properties/AssemblyInfo.cs`: Assembly metadata and versioning.
+- `Program.cs`: Main entry point. Initializes and runs the graphical interface.
+- `View/ImporterGUI.cs`: Implements the main Windows Form, handles user interaction, file dialogs, reference importing, and error handling.
+- `Properties/AssemblyInfo.cs`: Assembly metadata and versioning information.
 
 ## Contributing
 
-Pull requests and issues are welcome!
+Contributions, issues, and feature requests are welcome!
 
 ## License
 

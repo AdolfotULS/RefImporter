@@ -87,17 +87,17 @@ namespace RefImporter.View
 
                 if (string.IsNullOrWhiteSpace(csprojPath) || string.IsNullOrWhiteSpace(dllDirectory))
                 {
-                    MessageBox.Show("Selecciona el .csproj y la carpeta de DLLs.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("Select the .csproj file and the DLLs folder.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
                 if (!File.Exists(csprojPath))
                 {
-                    MessageBox.Show("El .csproj no existe.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("The .csproj file does not exist.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
                 if (!Directory.Exists(dllDirectory))
                 {
-                    MessageBox.Show("La carpeta de DLLs no existe.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("The DLLs folder does not exist.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
 
@@ -112,7 +112,7 @@ namespace RefImporter.View
                     CancellationToken.None
                 );
 
-                // Actualiza la UI de golpe (más fluido)
+                // Update UI in bulk (smoother)
                 listBox1.BeginUpdate();
                 listBox1.Items.Clear();
                 if (result.Added.Count > 0)
@@ -121,16 +121,16 @@ namespace RefImporter.View
 
                 if (result.Errors.Count > 0)
                 {
-                    var msg = "Proceso finalizado con advertencias:\n- " + string.Join("\n- ", result.Errors.Take(10));
-                    if (result.Errors.Count > 10) msg += $"\n(+{result.Errors.Count - 10} más)";
-                    MessageBox.Show(msg, "Advertencias", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    var msg = "Process finished with warnings:\n- " + string.Join("\n- ", result.Errors.Take(10));
+                    if (result.Errors.Count > 10) msg += $"\n(+{result.Errors.Count - 10} more)";
+                    MessageBox.Show(msg, "Warnings", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
 
                 MessageBox.Show(
                     result.ChangesMade
-                        ? "Referencias actualizadas correctamente."
-                        : "No se añadieron nuevas referencias (ya estaban o no hubo DLLs válidas).",
-                    "Resultado",
+                        ? "References updated successfully."
+                        : "No new references were added (they already existed or there were no valid DLLs).",
+                    "Result",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information
                 );
@@ -149,7 +149,7 @@ namespace RefImporter.View
             }
         }
 
-        // Lógica de procesamiento SECUENCIAL fuera del hilo de UI:
+        // Sequential processing logic outside the UI thread:
         private static (bool ChangesMade, List<string> Added, List<string> Errors) ProcessReferencesSequential(
             string csprojPath,
             string dllDirectory,
@@ -160,11 +160,11 @@ namespace RefImporter.View
             var errors = new List<string>();
             bool changesMade = false;
 
-            // Carga XML
+            // Load XML
             var csprojXml = XDocument.Load(csprojPath);
             XNamespace ns = csprojXml.Root?.GetDefaultNamespace() ?? "";
 
-            // Referencias existentes (por nombre y por HintPath)
+            // Existing references (by name and by HintPath)
             var existingByInclude = csprojXml.Descendants(ns + "Reference")
                 .Select(r => r.Attribute("Include")?.Value)
                 .Where(v => !string.IsNullOrWhiteSpace(v))
@@ -176,7 +176,7 @@ namespace RefImporter.View
                 .Select(p => Path.GetFileNameWithoutExtension(p))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            // ItemGroup de referencias
+            // Reference ItemGroup
             var itemGroup = csprojXml.Root.Elements(ns + "ItemGroup").FirstOrDefault()
                            ?? new XElement(ns + "ItemGroup");
             if (!csprojXml.Root.Elements(ns + "ItemGroup").Contains(itemGroup))
@@ -198,22 +198,22 @@ namespace RefImporter.View
                     !dllName.StartsWith(prefixFilter, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                // Evita duplicados por Include o por HintPath
+                // Avoid duplicates by Include or HintPath
                 if (existingByInclude.Contains(dllName) || existingByHintPath.Contains(dllName))
                     continue;
 
-                // Validación de ensamblado .NET: puede lanzar, por eso try/catch por DLL
+                // .NET assembly validation: can throw, so try/catch per DLL
                 try
                 {
                     AssemblyName.GetAssemblyName(dllPath);
                 }
                 catch (Exception ex)
                 {
-                    errors.Add($"{dllName}: no es un assembly .NET válido ({ex.GetType().Name}).");
+                    errors.Add($"{dllName}: not a valid .NET assembly ({ex.GetType().Name}).");
                     continue;
                 }
 
-                // Añadir referencia
+                // Add reference
                 var relPath = MakeRelativePath(csprojPath, dllPath);
                 var reference = new XElement(ns + "Reference",
                     new XAttribute("Include", dllName),
@@ -227,7 +227,7 @@ namespace RefImporter.View
                 changesMade = true;
             }
 
-            // Backup y guardado
+            // Backup and save
             if (changesMade)
             {
                 var backup = csprojPath + ".bak";
@@ -239,7 +239,7 @@ namespace RefImporter.View
             return (changesMade, added, errors);
         }
 
-        // (reusa tu MakeRelativePath tal cual)
+        // (reuse your MakeRelativePath as is)
         private static string MakeRelativePath(string fromPath, string toPath)
         {
             Uri fromUri = new Uri(Path.GetFullPath(fromPath));
@@ -262,19 +262,5 @@ namespace RefImporter.View
                 return false;
             }
         }
-
-
-        /*private static string MakeRelativePath(string fromPath, string toPath) // Method to create a relative path from 'fromPath' to 'toPath'
-        {
-            Uri fromUri = new Uri(Path.GetFullPath(fromPath));
-            Uri toUri = new Uri(Path.GetFullPath(toPath));
-
-            if (fromUri.Scheme != toUri.Scheme)
-            {
-                return toPath;
-            }
-
-            return Uri.UnescapeDataString(fromUri.MakeRelativeUri(toUri).ToString().Replace('/', Path.DirectorySeparatorChar));
-        }*/
     }
 }

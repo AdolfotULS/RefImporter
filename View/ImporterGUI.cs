@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml.Linq;
@@ -71,93 +72,182 @@ namespace RefImporter.View
             }
         }
 
-        private void button3_Click(object sender, EventArgs e)
+        private async void button3_Click(object sender, EventArgs e)
         {
+            button3.Enabled = false;
+            button1.Enabled = false;
+            button2.Enabled = false;
+            Cursor = Cursors.WaitCursor;
+
             try
             {
                 var csprojPath = textBox1.Text;
                 var dllDirectory = textBox2.Text;
+                var prefixFilter = textBox3.Text;
+
                 if (string.IsNullOrWhiteSpace(csprojPath) || string.IsNullOrWhiteSpace(dllDirectory))
                 {
-                    MessageBox.Show("Please select both the .csproj file and the folder containing .dll files.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("Selecciona el .csproj y la carpeta de DLLs.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
                 if (!File.Exists(csprojPath))
                 {
-                    MessageBox.Show("The specified .csproj file does not exist.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("El .csproj no existe.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
                 if (!Directory.Exists(dllDirectory))
                 {
-                    MessageBox.Show("The specified folder does not exist.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show("La carpeta de DLLs no existe.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 }
 
-                XDocument csprojXml = XDocument.Load(csprojPath);
-                XNamespace ns = csprojXml.Root?.GetDefaultNamespace() ?? "";
+                progressBar1.Style = ProgressBarStyle.Continuous;
+                progressBar1.Value = 0;
+                progressBar1.Visible = true;
 
-                var existingRefs = csprojXml.Descendants(ns + "Reference")
-                    .Select(r => r.Attribute("Include")?.Value)
-                    .Where(r => r != null)
-                    .ToHashSet();
+                var progress = new Progress<int>(v => progressBar1.Value = Math.Max(0, Math.Min(100, v)));
 
-                bool changesMade = false;
+                var result = await Task.Run(() =>
+                    ProcessReferencesSequential(csprojPath, dllDirectory, prefixFilter, progress),
+                    CancellationToken.None
+                );
 
-                foreach (var dllPath in Directory.GetFiles(dllDirectory, "*.dll"))
+                // Actualiza la UI de golpe (más fluido)
+                listBox1.BeginUpdate();
+                listBox1.Items.Clear();
+                if (result.Added.Count > 0)
+                    listBox1.Items.AddRange(result.Added.ToArray());
+                listBox1.EndUpdate();
+
+                if (result.Errors.Count > 0)
                 {
-                    string dllFileName = Path.GetFileNameWithoutExtension(dllPath);
-                    if (string.IsNullOrWhiteSpace(dllFileName))
-                        continue;
-
-                    if (!string.IsNullOrEmpty(textBox3.Text))
-                    {
-                        if (!dllFileName.StartsWith(textBox3.Text, StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;  
-                        }
-                    }
-
-
-                    if (existingRefs.Contains(dllFileName))
-                        continue;
-
-                    if (!IsDotNetAssembly(dllPath))
-                        continue;
-
-                    //Console.WriteLine($"Adding reference to: {dllFileName}");
-                    listBox1.Items.Add(dllFileName);
-
-                    var itemGroup = csprojXml.Root.Elements(ns + "ItemGroup").FirstOrDefault() ??
-                                    new XElement(ns + "ItemGroup");
-
-                    if (!csprojXml.Root.Elements(ns + "ItemGroup").Contains(itemGroup))
-                        csprojXml.Root.Add(itemGroup);
-
-                    itemGroup.Add(new XElement(ns + "Reference",
-                        new XAttribute("Include", dllFileName),
-                        new XElement(ns + "HintPath", MakeRelativePath(csprojPath, dllPath))
-                    ));
-
-                    changesMade = true;
+                    var msg = "Proceso finalizado con advertencias:\n- " + string.Join("\n- ", result.Errors.Take(10));
+                    if (result.Errors.Count > 10) msg += $"\n(+{result.Errors.Count - 10} más)";
+                    MessageBox.Show(msg, "Advertencias", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
 
-                if (changesMade)
-                {
-                    csprojXml.Save(csprojPath);
-                    MessageBox.Show("References updated successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    //Console.WriteLine("References updated successfully.");
-                }
-                else
-                {
-                    // Console.WriteLine("No changes were made.");
-                    MessageBox.Show("No new references were added. All DLLs are already referenced or no valid DLLs found.", "Info", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
+                MessageBox.Show(
+                    result.ChangesMade
+                        ? "Referencias actualizadas correctamente."
+                        : "No se añadieron nuevas referencias (ya estaban o no hubo DLLs válidas).",
+                    "Resultado",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information
+                );
             }
             catch (Exception ex)
             {
-                //Console.WriteLine($"Error processing the project file: {ex.Message}");
-                MessageBox.Show($"Error processing the project file: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+            finally
+            {
+                progressBar1.Visible = false;
+                Cursor = Cursors.Default;
+                button3.Enabled = true;
+                button1.Enabled = true;
+                button2.Enabled = true;
+            }
+        }
+
+        // Lógica de procesamiento SECUENCIAL fuera del hilo de UI:
+        private static (bool ChangesMade, List<string> Added, List<string> Errors) ProcessReferencesSequential(
+            string csprojPath,
+            string dllDirectory,
+            string prefixFilter,
+            IProgress<int> progress)
+        {
+            var added = new List<string>();
+            var errors = new List<string>();
+            bool changesMade = false;
+
+            // Carga XML
+            var csprojXml = XDocument.Load(csprojPath);
+            XNamespace ns = csprojXml.Root?.GetDefaultNamespace() ?? "";
+
+            // Referencias existentes (por nombre y por HintPath)
+            var existingByInclude = csprojXml.Descendants(ns + "Reference")
+                .Select(r => r.Attribute("Include")?.Value)
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var existingByHintPath = csprojXml.Descendants(ns + "Reference")
+                .Select(r => r.Element(ns + "HintPath")?.Value)
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(p => Path.GetFileNameWithoutExtension(p))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // ItemGroup de referencias
+            var itemGroup = csprojXml.Root.Elements(ns + "ItemGroup").FirstOrDefault()
+                           ?? new XElement(ns + "ItemGroup");
+            if (!csprojXml.Root.Elements(ns + "ItemGroup").Contains(itemGroup))
+                csprojXml.Root.Add(itemGroup);
+
+            var dlls = Directory.GetFiles(dllDirectory, "*.dll");
+            int total = Math.Max(1, dlls.Length);
+            int count = 0;
+
+            foreach (var dllPath in dlls)
+            {
+                count++;
+                progress?.Report((int)(count * 100.0 / total));
+
+                string dllName = Path.GetFileNameWithoutExtension(dllPath);
+                if (string.IsNullOrWhiteSpace(dllName)) continue;
+
+                if (!string.IsNullOrEmpty(prefixFilter) &&
+                    !dllName.StartsWith(prefixFilter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // Evita duplicados por Include o por HintPath
+                if (existingByInclude.Contains(dllName) || existingByHintPath.Contains(dllName))
+                    continue;
+
+                // Validación de ensamblado .NET: puede lanzar, por eso try/catch por DLL
+                try
+                {
+                    AssemblyName.GetAssemblyName(dllPath);
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"{dllName}: no es un assembly .NET válido ({ex.GetType().Name}).");
+                    continue;
+                }
+
+                // Añadir referencia
+                var relPath = MakeRelativePath(csprojPath, dllPath);
+                var reference = new XElement(ns + "Reference",
+                    new XAttribute("Include", dllName),
+                    new XElement(ns + "HintPath", relPath)
+                );
+
+                itemGroup.Add(reference);
+                existingByInclude.Add(dllName);
+                existingByHintPath.Add(dllName);
+                added.Add(dllName);
+                changesMade = true;
+            }
+
+            // Backup y guardado
+            if (changesMade)
+            {
+                var backup = csprojPath + ".bak";
+                try { File.Copy(csprojPath, backup, overwrite: true); } catch { /* best effort */ }
+                csprojXml.Save(csprojPath);
+            }
+
+            progress?.Report(100);
+            return (changesMade, added, errors);
+        }
+
+        // (reusa tu MakeRelativePath tal cual)
+        private static string MakeRelativePath(string fromPath, string toPath)
+        {
+            Uri fromUri = new Uri(Path.GetFullPath(fromPath));
+            Uri toUri = new Uri(Path.GetFullPath(toPath));
+            if (fromUri.Scheme != toUri.Scheme)
+                return toPath;
+            return Uri.UnescapeDataString(
+                fromUri.MakeRelativeUri(toUri).ToString().Replace('/', Path.DirectorySeparatorChar));
         }
 
         private static bool IsDotNetAssembly(string path) // Method to check if the file at 'path' is a valid .NET assembly
@@ -174,7 +264,7 @@ namespace RefImporter.View
         }
 
 
-        private static string MakeRelativePath(string fromPath, string toPath) // Method to create a relative path from 'fromPath' to 'toPath'
+        /*private static string MakeRelativePath(string fromPath, string toPath) // Method to create a relative path from 'fromPath' to 'toPath'
         {
             Uri fromUri = new Uri(Path.GetFullPath(fromPath));
             Uri toUri = new Uri(Path.GetFullPath(toPath));
@@ -185,6 +275,6 @@ namespace RefImporter.View
             }
 
             return Uri.UnescapeDataString(fromUri.MakeRelativeUri(toUri).ToString().Replace('/', Path.DirectorySeparatorChar));
-        }
+        }*/
     }
 }
